@@ -4016,15 +4016,6 @@ void PortsOrch::registerPort(Port &p)
     If they are enabled, install the counters immediately */
     if (flex_counters_orch->getPortCountersState())
     {
-        if (p.m_type == Port::Type::PHY)
-        {
-            if (!m_supported_serdes_attrs.empty())
-            {
-                auto port_attr_stats = generateCounterStats(m_supported_serdes_attrs, sai_serialize_port_attr);
-                port_serdes_attr_manager.setCounterIdList(p.m_port_id,
-                        CounterType::PORT_SERDES_ATTR, port_attr_stats);
-            }
-        }
         auto port_counter_stats = generateCounterStats(port_stat_ids, sai_serialize_port_stat);
         port_stat_manager.setCounterIdList(p.m_port_id,
                 CounterType::PORT, port_counter_stats);
@@ -4035,6 +4026,18 @@ void PortsOrch::registerPort(Port &p)
         if (p.m_line_side_id)
             gb_port_stat_manager.setCounterIdList(p.m_line_side_id,
                     CounterType::PORT, gbport_counter_stats, p.m_switch_id);
+    }
+    if (flex_counters_orch->getPortSerdesAttrCountersState())
+    {
+        if (p.m_type == Port::Type::PHY && supportsPortSerdesAttr(p.m_port_id, p.m_alias.c_str()))
+        {
+            if (!m_supported_serdes_attrs.empty())
+            {
+                auto port_attr_stats = generateCounterStats(m_supported_serdes_attrs, sai_serialize_port_attr);
+                port_serdes_attr_manager.setCounterIdList(p.m_port_id,
+                        CounterType::PORT_SERDES_ATTR, port_attr_stats);
+            }
+        }
     }
     if (flex_counters_orch->getPortBufferDropCountersState())
     {
@@ -4090,6 +4093,13 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     if (flex_counters_orch->getWredPortCountersState())
     {
         wred_port_stat_manager.clearCounterIdList(p.m_port_id);
+    }
+    if (p.m_type == Port::Type::PHY && supportsPortSerdesAttr(p.m_port_id, p.m_alias.c_str()))
+    {
+        if (!m_supported_serdes_attrs.empty())
+        {
+            port_serdes_attr_manager.clearCounterIdList(p.m_port_id);
+        }
     }
 
     /* remove port name map from counter table */
@@ -8826,6 +8836,59 @@ void PortsOrch::queryPortSerdesAttrCapabilities()
     m_serdes_attr_capability_checked = true;
 }
 
+bool PortsOrch::supportsPortSerdesAttr(sai_object_id_t port_id, const char* port_name)
+{
+    // Verify port supports ALL SERDES attributes
+    // Query with count=0 to check if attribute is supported (expect BUFFER_OVERFLOW)
+
+    // Check RX_SIGNAL_DETECT
+    sai_attribute_t test_attr;
+    test_attr.id = SAI_PORT_ATTR_RX_SIGNAL_DETECT;
+    test_attr.value.portlanelatchstatuslist.count = 0;
+    test_attr.value.portlanelatchstatuslist.list = nullptr;
+
+    sai_status_t status = sai_port_api->get_port_attribute(port_id, 1, &test_attr);
+    if (status != SAI_STATUS_BUFFER_OVERFLOW)
+    {
+        SWSS_LOG_ERROR("PORT_SERDES_ATTR: Port %s does not support RX_SIGNAL_DETECT attribute (status=%d)",
+                      port_name, status);
+        return false;
+    }
+    SWSS_LOG_DEBUG("PORT_SERDES_ATTR: Port %s supports RX_SIGNAL_DETECT attribute (count=%d)",
+                   port_name, test_attr.value.portlanelatchstatuslist.count);
+
+    // Check FEC_ALIGNMENT_LOCK
+    test_attr.id = SAI_PORT_ATTR_FEC_ALIGNMENT_LOCK;
+    test_attr.value.portlanelatchstatuslist.count = 0;
+    test_attr.value.portlanelatchstatuslist.list = nullptr;
+
+    status = sai_port_api->get_port_attribute(port_id, 1, &test_attr);
+    if (status != SAI_STATUS_BUFFER_OVERFLOW)
+    {
+        SWSS_LOG_ERROR("PORT_SERDES_ATTR: Port %s does not support FEC_ALIGNMENT_LOCK attribute (status=%d)",
+                      port_name, status);
+        return false;
+    }
+    SWSS_LOG_DEBUG("PORT_SERDES_ATTR: Port %s supports FEC_ALIGNMENT_LOCK attribute (count=%d)",
+                   port_name, test_attr.value.portlanelatchstatuslist.count);
+
+    // Check RX_SNR
+    test_attr.id = SAI_PORT_ATTR_RX_SNR;
+    test_attr.value.portsnrlist.count = 0;
+    test_attr.value.portsnrlist.list = nullptr;
+
+    status = sai_port_api->get_port_attribute(port_id, 1, &test_attr);
+    if (status != SAI_STATUS_BUFFER_OVERFLOW)
+    {
+        SWSS_LOG_ERROR("PORT_SERDES_ATTR: Port %s does not support RX_SNR attribute (status=%d)",
+                      port_name, status);
+        return false;
+    }
+    SWSS_LOG_DEBUG("PORT_SERDES_ATTR: Port %s supports RX_SNR attribute (count=%d)",
+                   port_name, test_attr.value.portsnrlist.count);
+    return true;
+}
+
 void PortsOrch::generatePortSerdesAttrCounterMap()
 {
     if (m_isPortSerdesAttrCounterMapGenerated)
@@ -8846,7 +8909,7 @@ void PortsOrch::generatePortSerdesAttrCounterMap()
 
     for (const auto& it: m_portList)
     {
-        if (it.second.m_type != Port::Type::PHY)
+        if (it.second.m_type != Port::Type::PHY && supportsPortSerdesAttr(it.second.m_port_id, it.second.m_alias.c_str()))
         {
             continue;
         }

@@ -219,6 +219,7 @@ public:
     void clearPortSerdesAttrCounterMap();
     const std::vector<sai_port_attr_t>& getPortSerdesAttrIds() const;
     void queryPortSerdesAttrCapabilities();
+    bool supportsPortSerdesAttr(sai_object_id_t port_id, const char* port_name);
 
     void generateWredPortCounterMap();
     void generateWredQueueCounterMap();
